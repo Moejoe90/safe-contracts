@@ -1,13 +1,16 @@
 const utils = require('./utils')
 
 const CreateAndAddModules = artifacts.require("./libraries/CreateAndAddModules.sol");
-const ProxyFactory = artifacts.require("./ProxyFactory.sol");
-const GnosisSafe = artifacts.require("./GnosisSafe.sol");
 const DutchXModule = artifacts.require("./DutchXModule.sol");
+const GnosisSafe = artifacts.require("./GnosisSafe.sol");
+const ProxyFactory = artifacts.require("./ProxyFactory.sol");
+const safeUtils = require('./utilsPersonalSafe')
 
 
 contract('DutchXModule', function(accounts) {
 
+    const dxAddress = "0xaf1745c0f8117384dfa5fff40f824057c70f2ed3" // This address doesn't matter, we are just testing the module, not the integration
+    const GNOAddress = "0x6810e776880c02933d47db1b9fc05908e5386b96" // This address doesn't matter neither, we are just testing the module, not the integration
     let gnosisSafe
     let dxModule
     let lw
@@ -25,7 +28,7 @@ contract('DutchXModule', function(accounts) {
         gnosisSafeMasterCopy.setup([accounts[0], accounts[1]], 2, 0, "0x")
         let dxModuleCopy = await DutchXModule.new( [])
         // Create Gnosis Safe and DutchX Module in one transaction
-        let moduleData = await dxModuleCopy.contract.setup.getData(accounts[0], [accounts[3]]) // dx, whitelistedToken
+        let moduleData = await dxModuleCopy.contract.setup.getData(dxAddress, [GNOAddress]) // dx, whitelistedToken
         let proxyFactoryData = await proxyFactory.contract.createProxy.getData(dxModuleCopy.address, moduleData)
         let modulesCreationData = utils.createAndAddModulesData([proxyFactoryData])
         let createAndAddModulesData = createAndAddModules.contract.createAndAddModules.getData(proxyFactory.address, modulesCreationData)
@@ -40,7 +43,14 @@ contract('DutchXModule', function(accounts) {
     })
 
     it.only('should execute approve tokens and deposit for whitelisted token in the dx', async () => {
-        
+        let token = await safeUtils.deployToken(accounts[0]); // token is not whitelisted yet
+
+        let totalSupply = (await token.balances(accounts[0])).toNumber();
+        await token.transfer(gnosisSafe.address, totalSupply, {from: accounts[0]});
+
+        // total amount of tokens are in the safe contract
+        assert.equal(await (await token.balances(accounts[0])).toNumber(), 0);
+        assert.equal(await (await token.balances(gnosisSafe.address)).toNumber(), totalSupply);
     })
 
     // it('should execute a withdraw transaction to a whitelisted account', async () => {
