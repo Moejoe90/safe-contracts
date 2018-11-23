@@ -23,21 +23,27 @@ contract DutchXModule is Module {
     bytes32 public constant CLAIM_BUYER_DX_FUNCTION_IDENTIFIER = hex"d3cc8d1c";
     
     address public dutchXAddress;
-    // isWhitelisted mapping maps destination address to boolean.
+    // isWhitelistedToken mapping maps destination address to boolean.
     mapping (address => bool) public isWhitelistedToken;
+    mapping (address => bool) public isOperator;
 
     /// @dev Setup function sets initial storage of contract.
     /// @param dx DutchX Proxy Address.
     /// @param tokens List of whitelisted tokens.
-    function setup(address dx, address[] tokens)
+    function setup(address dx, address[] memory tokens, address[] memory operators)
         public
     {
         setManager();
         dutchXAddress = dx;
         for (uint256 i = 0; i < tokens.length; i++) {
             address token = tokens[i];
-            require(token != 0, "Invalid token provided");
+            require(token != address(0), "Invalid token provided");
             isWhitelistedToken[token] = true;
+        }
+        for (uint256 i = 0; i < operators.length; i++) {
+            address operator = operators[i];
+            require(operator != address(0), "Invalid operator address provided");
+            isOperator[operator] = true;
         }
     }
 
@@ -47,7 +53,7 @@ contract DutchXModule is Module {
         public
         authorized
     {
-        require(token != 0, "Invalid token provided");
+        require(token != address(0), "Invalid token provided");
         require(!isWhitelistedToken[token], "Token is already whitelisted");
         isWhitelistedToken[token] = true;
     }
@@ -62,13 +68,34 @@ contract DutchXModule is Module {
         isWhitelistedToken[token] = false;
     }
 
+    /// @dev Allows to add operator to whitelist. This can only be done via a Safe transaction.
+    /// @param operator ethereum address.
+    function addOperator(address operator)
+        public
+        authorized
+    {
+        require(operator != address(0), "Invalid address provided");
+        require(!isOperator[operator], "Operator is already whitelisted");
+        isOperator[operator] = true;
+    }
+
+    /// @dev Allows to remove operator from whitelist. This can only be done via a Safe transaction.
+    /// @param operator ethereum address.
+    function removeOperator(address operator)
+        public
+        authorized
+    {
+        require(isOperator[operator], "Operator is not whitelisted");
+        isOperator[operator] = false;
+    }
+
     /// @dev Allows to change DutchX Proxy contract address. This can only be done via a Safe transaction.
     /// @param dx New proxy contract address for DutchX.
     function changeDXProxy(address dx)
         public
         authorized
     {
-        require(dx != 0, "Invalid address provided");
+        require(dx != address(0), "Invalid address provided");
         dutchXAddress = dx;
     }
 
@@ -77,12 +104,12 @@ contract DutchXModule is Module {
     /// @param value Not checked.
     /// @param data Allowed operations (postSellOrder, postBuyOrder, claimTokensFromSeveralAuctionsAsBuyer, claimTokensFromSeveralAuctionsAsSeller, deposit).
     /// @return Returns if transaction can be executed.
-    function executeWhitelisted(address to, uint256 value, bytes data)
+    function executeWhitelisted(address to, uint256 value, bytes memory data)
         public
         returns (bool)
     {
         // Only Safe owners are allowed to execute transactions to whitelisted accounts.
-        require(OwnerManager(manager).isOwner(msg.sender), "Method can only be called by an owner");
+        require(isOperator[msg.sender], "Method can only be called by an operator");
 
         // Only DutchX Proxy and Whitelisted tokens are allowed as destination
         require(to == dutchXAddress || isWhitelistedToken[to], "Destination address is not allowed");
@@ -103,19 +130,24 @@ contract DutchXModule is Module {
         // PostSellOrder, postBuyOrder, claimTokensFromSeveralAuctionsAsBuyer, claimTokensFromSeveralAuctionsAsSeller, deposit
         // Are allowed for the Dutch X contract
         if (functionIdentifier == APPROVE_TOKEN_FUNCTION_IDENTIFIER) {
-            (address spender, uint256 amount) = abi.decode(data, (address, uint256));
+            // approve(address spender, uint256 amount) we skip the amount
+            (address spender) = abi.decode(data, (address));
             require(spender == dutchXAddress, "Spender must be the DutchX Contract");
         } else if (functionIdentifier == DEPOSIT_DX_FUNCTION_IDENTIFIER) {
-            (address token, uint256 amount) = abi.decode(data, (address, uint256));
+            // deposit(address token, uint256 amount) we skip the amount
+            (address token) = abi.decode(data, (address));
             require (isWhitelistedToken[token], "Only whitelisted tokens can be deposit on the DutchX");
         } else if (functionIdentifier == POST_SELL_DX_FUNCTION_IDENTIFIER) {
-            (address sellToken, address buyToken, uint256 auctionIndex, uint256 amount) = abi.decode(data, (address, address, uint256, uint256));
+            // postSellOrder(address sellToken, address buyToken, uint256 auctionIndex, uint256 amount) we skip auctionIndex and amount
+            (address sellToken, address buyToken) = abi.decode(data, (address, address));
             require (isWhitelistedToken[sellToken] && isWhitelistedToken[buyToken], "Only whitelisted tokens can be sold");
         } else if (functionIdentifier == POST_BUY_DX_FUNCTION_IDENTIFIER) {
-            (address sellToken, address buyToken, uint256 auctionIndex, uint256 amount) = abi.decode(data, (address, address, uint256, uint256));
+            // postSellOrder(address sellToken, address buyToken, uint256 auctionIndex, uint256 amount) we skip auctionIndex and amount
+            (address sellToken, address buyToken) = abi.decode(data, (address, address));
             require (isWhitelistedToken[sellToken] && isWhitelistedToken[buyToken], "Only whitelisted tokens can be bought");
-        } else if ( functionIdentifier != CLAIM_SELLER_DX_FUNCTION_IDENTIFIER && functionIdentifier != CLAIM_BUYER_DX_FUNCTION_IDENTIFIER && functionIdentifier != DEPOSIT_WETH_FUNCTION_IDENTIFIER) {
-            return false; // Other functions are not allowed
+        } else {
+            // Other functions different than claim and deposit are not allowed
+            require(functionIdentifier == CLAIM_SELLER_DX_FUNCTION_IDENTIFIER || functionIdentifier == CLAIM_BUYER_DX_FUNCTION_IDENTIFIER || functionIdentifier == DEPOSIT_WETH_FUNCTION_IDENTIFIER, "Function not allowed");
         }
 
         require(manager.execTransactionFromModule(to, value, data, Enum.Operation.Call), "Could not execute transaction");

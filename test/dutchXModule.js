@@ -10,7 +10,6 @@ const safeUtils = require('./utilsPersonalSafe')
 contract('DutchXModule', function(accounts) {
 
     const dxAddress = "0xaf1745c0f8117384dfa5fff40f824057c70f2ed3" // This address doesn't matter, we are just testing the module, not the integration
-    const GNOAddress = "0x6810e776880c02933d47db1b9fc05908e5386b96" // This address doesn't matter neither, we are just testing the module, not the integration
     let gnosisSafe
     let dxModule
     let lw
@@ -24,14 +23,15 @@ contract('DutchXModule', function(accounts) {
         let proxyFactory = await ProxyFactory.new()
         let createAndAddModules = await CreateAndAddModules.new()
         let gnosisSafeMasterCopy = await GnosisSafe.new()
-        // Initialize safe master copy
+        // Initialize safe master copy with accounts[0] and accounts[1] as owners and 2 required confirmations
         gnosisSafeMasterCopy.setup([accounts[0], accounts[1]], 2, 0, "0x")
         let dxModuleCopy = await DutchXModule.new( [])
         // Create Gnosis Safe and DutchX Module in one transaction
-        let moduleData = await dxModuleCopy.contract.setup.getData(dxAddress, [GNOAddress]) // dx, whitelistedToken
+        let moduleData = await dxModuleCopy.contract.setup.getData(dxAddress, [], [accounts[0]]) // dx, whitelistedToken, operators
         let proxyFactoryData = await proxyFactory.contract.createProxy.getData(dxModuleCopy.address, moduleData)
         let modulesCreationData = utils.createAndAddModulesData([proxyFactoryData])
         let createAndAddModulesData = createAndAddModules.contract.createAndAddModules.getData(proxyFactory.address, modulesCreationData)
+        // Initialize safe proxy with lightwallet accounts as owners and also accounts[1], note that only lightwallet accounts can sign messages without prefix
         let gnosisSafeData = await gnosisSafeMasterCopy.contract.setup.getData([lw.accounts[0], lw.accounts[1], accounts[1]], 2, createAndAddModules.address, createAndAddModulesData)
         gnosisSafe = utils.getParamFromTxEvent(
             await proxyFactory.createProxy(gnosisSafeMasterCopy.address, gnosisSafeData),
@@ -43,62 +43,60 @@ contract('DutchXModule', function(accounts) {
     })
 
     it.only('should execute approve tokens and deposit for whitelisted token in the dx', async () => {
-        let token = await safeUtils.deployToken(accounts[0]); // token is not whitelisted yet
+        let token = await safeUtils.deployWETHToken(accounts[0]); // token is not whitelisted yet
 
+        // send tokens to the safe and 1 ETH
         let totalSupply = (await token.balances(accounts[0])).toNumber();
         await token.transfer(gnosisSafe.address, totalSupply, {from: accounts[0]});
+        await web3.eth.sendTransaction({from: accounts[0], to: gnosisSafe.address, value: web3.toWei(1, 'ether')})
 
         // total amount of tokens are in the safe contract
         assert.equal(await (await token.balances(accounts[0])).toNumber(), 0);
         assert.equal(await (await token.balances(gnosisSafe.address)).toNumber(), totalSupply);
+        assert.equal(await (await web3.eth.getBalance(gnosisSafe.address)).toNumber(), web3.toWei(1, 'ether'));
+
+        // safe contract has the tokens, module is set up correctly, but none whitelisted token
+        // if we try to execute any function, will fail, none token defined.
+        // MethodID for deposit()
+        const depositWETHData = token.deposit.getData()
+        utils.assertRejects(
+            dxModule.executeWhitelisted(
+                token.address, web3.toWei(1, 'ether'), depositWETHData, {from: accounts[0]}
+            ),
+            'execTransactionFromModule deposit WETH fails'
+        )
+        
+        // addWhitelist must come from the safe contract
+        // regular tx from owner accounts will fail
+        utils.assertRejects(
+            dxModule.addToWhitelist(token.address, {from: accounts[0]}),
+            'Whitelist token'
+        )
+
+        // from the safe works
+        let data = await dxModule.contract.addToWhitelist.getData(token.address)
+        let nonce = await gnosisSafe.nonce()
+        let transactionHash = await gnosisSafe.getTransactionHash(dxModule.address, 0, data, CALL, 0, 0, 0, 0, 0, nonce)
+        let sigs = utils.signTransaction(lw, [lw.accounts[0], lw.accounts[1]], transactionHash)
+        utils.logGasUsage(
+            'execTransaction add account to whitelist',
+            await gnosisSafe.execTransaction(
+                dxModule.address, 0, data, CALL, 0, 0, 0, 0, 0, sigs
+            )
+        )
+        assert.equal(await dxModule.isWhitelistedToken(token.address), true)
+
+        // No operator user will fail
+        utils.assertRejects(
+            dxModule.executeWhitelisted(token.address, web3.toWei(1, 'ether'), depositWETHData, {from: accounts[1]}),
+            'no operator fail to execute from module'
+        )
+
+        utils.logGasUsage(
+            'execTransactionFromModule deposit WETH',
+            await dxModule.executeWhitelisted(
+                token.address, web3.toWei(1, 'ether'), depositWETHData, {from: accounts[0]}
+            )
+        )
     })
-
-    // it('should execute a withdraw transaction to a whitelisted account', async () => {
-    //     // Withdraw to whitelisted account should fail as we don't have funds
-    //     await utils.assertRejects(
-    //         whitelistModule.executeWhitelisted(
-    //             accounts[3], 300, "0x", {from: accounts[1]}
-    //         ),
-    //         "Not enough funds"
-    //     )
-    //     // Deposit 1 eth
-    //     await web3.eth.sendTransaction({from: accounts[0], to: gnosisSafe.address, value: web3.toWei(1, 'ether')})
-    //     assert.equal(await web3.eth.getBalance(gnosisSafe.address).toNumber(), web3.toWei(1, 'ether'));
-    //     // Withdraw to whitelisted account
-    //     utils.logGasUsage(
-    //         'execTransactionFromModule withdraw to whitelisted account',
-    //         await whitelistModule.executeWhitelisted(
-    //             accounts[3], 300, "0x", {from: accounts[1]}
-    //         )
-    //     )
-    //     assert.equal(await web3.eth.getBalance(gnosisSafe.address).toNumber(), web3.toWei(1, 'ether') - 300);
-    // })
-
-    // it('should add and remove an account from the whitelist', async () => {
-    //     assert.equal(await whitelistModule.isWhitelisted(accounts[1]), false)
-    //     // Add account 3 to whitelist
-    //     let data = await whitelistModule.contract.addToWhitelist.getData(accounts[1])
-    //     let nonce = await gnosisSafe.nonce()
-    //     let transactionHash = await gnosisSafe.getTransactionHash(whitelistModule.address, 0, data, CALL, 0, 0, 0, 0, 0, nonce)
-    //     let sigs = utils.signTransaction(lw, [lw.accounts[0], lw.accounts[1]], transactionHash)
-    //     utils.logGasUsage(
-    //         'execTransaction add account to whitelist',
-    //         await gnosisSafe.execTransaction(
-    //             whitelistModule.address, 0, data, CALL, 0, 0, 0, 0, 0, sigs
-    //         )
-    //     )
-    //     assert.equal(await whitelistModule.isWhitelisted(accounts[1]), true)
-    //     // Remove account 3 from whitelist
-    //     data = await whitelistModule.contract.removeFromWhitelist.getData(accounts[1])
-    //     nonce = await gnosisSafe.nonce()
-    //     transactionHash = await gnosisSafe.getTransactionHash(whitelistModule.address, 0, data, CALL, 0, 0, 0, 0, 0, nonce)
-    //     sigs = utils.signTransaction(lw, [lw.accounts[0], lw.accounts[1]], transactionHash)
-    //     utils.logGasUsage(
-    //         'execTransaction remove account from whitelist',
-    //         await gnosisSafe.execTransaction(
-    //             whitelistModule.address, 0, data, CALL, 0, 0, 0, 0, 0, sigs
-    //         )
-    //     )
-    //     assert.equal(await whitelistModule.isWhitelisted(accounts[1]), false)
-    // })
 });
