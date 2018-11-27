@@ -115,7 +115,7 @@ contract DutchXModule is Module {
         require(to == dutchXAddress || isWhitelistedToken[to], "Destination address is not allowed");
 
         // Decode data
-        bytes32 functionIdentifier;
+        bytes4 functionIdentifier;        
         // solium-disable-next-line security/no-inline-assembly
         assembly {
             functionIdentifier := mload(add(data, 0x20))
@@ -130,21 +130,54 @@ contract DutchXModule is Module {
         // PostSellOrder, postBuyOrder, claimTokensFromSeveralAuctionsAsBuyer, claimTokensFromSeveralAuctionsAsSeller, deposit
         // Are allowed for the Dutch X contract
         if (functionIdentifier == APPROVE_TOKEN_FUNCTION_IDENTIFIER) {
+            uint spender;
+            // solium-disable-next-line security/no-inline-assembly
+            assembly {
+                spender := mload(add(data, 0x24))
+            }
+
+            // TODO we need abi.decodeWithSelector
             // approve(address spender, uint256 amount) we skip the amount
-            (address spender) = abi.decode(data, (address));
-            require(spender == dutchXAddress, "Spender must be the DutchX Contract");
+            //(address spender) = abi.decode(dataParams, (address));
+
+            require(address(spender) == dutchXAddress, "Spender must be the DutchX Contract");
         } else if (functionIdentifier == DEPOSIT_DX_FUNCTION_IDENTIFIER) {
+            // TODO we need abi.decodeWithSelector
             // deposit(address token, uint256 amount) we skip the amount
-            (address token) = abi.decode(data, (address));
-            require (isWhitelistedToken[token], "Only whitelisted tokens can be deposit on the DutchX");
+            // (address token) = abi.decode(data, (address));
+
+            uint depositToken;
+            // solium-disable-next-line security/no-inline-assembly
+            assembly {
+                depositToken := mload(add(data, 0x24))
+            }
+            require (isWhitelistedToken[address(depositToken)], "Only whitelisted tokens can be deposit on the DutchX");
         } else if (functionIdentifier == POST_SELL_DX_FUNCTION_IDENTIFIER) {
+            // TODO we need abi.decodeWithSelector
             // postSellOrder(address sellToken, address buyToken, uint256 auctionIndex, uint256 amount) we skip auctionIndex and amount
-            (address sellToken, address buyToken) = abi.decode(data, (address, address));
-            require (isWhitelistedToken[sellToken] && isWhitelistedToken[buyToken], "Only whitelisted tokens can be sold");
+            //(address sellToken, address buyToken) = abi.decode(data, (address, address));
+            
+            uint sellToken;
+            uint buyToken;
+            // solium-disable-next-line security/no-inline-assembly
+            assembly {
+                sellToken := mload(add(data, 0x24))
+                buyToken := mload(add(data, 0x44))
+            }
+            require (isWhitelistedToken[address(sellToken)] && isWhitelistedToken[address(buyToken)], "Only whitelisted tokens can be sold");
         } else if (functionIdentifier == POST_BUY_DX_FUNCTION_IDENTIFIER) {
-            // postSellOrder(address sellToken, address buyToken, uint256 auctionIndex, uint256 amount) we skip auctionIndex and amount
-            (address sellToken, address buyToken) = abi.decode(data, (address, address));
-            require (isWhitelistedToken[sellToken] && isWhitelistedToken[buyToken], "Only whitelisted tokens can be bought");
+            // TODO we need abi.decodeWithSelector
+            // postBuyOrder(address sellToken, address buyToken, uint256 auctionIndex, uint256 amount) we skip auctionIndex and amount
+            // (address sellToken, address buyToken) = abi.decode(data, (address, address));
+
+            uint sellToken;
+            uint buyToken;
+            // solium-disable-next-line security/no-inline-assembly
+            assembly {
+                sellToken := mload(add(data, 0x24))
+                buyToken := mload(add(data, 0x44))
+            }
+            require (isWhitelistedToken[address(sellToken)] && isWhitelistedToken[address(buyToken)], "Only whitelisted tokens can be bought");
         } else {
             // Other functions different than claim and deposit are not allowed
             require(functionIdentifier == CLAIM_SELLER_DX_FUNCTION_IDENTIFIER || functionIdentifier == CLAIM_BUYER_DX_FUNCTION_IDENTIFIER || functionIdentifier == DEPOSIT_WETH_FUNCTION_IDENTIFIER, "Function not allowed");

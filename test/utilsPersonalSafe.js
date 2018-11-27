@@ -133,7 +133,14 @@ let deployWETHToken = async function(deployer) {
             balances[to] += value;
             return true;
         }
+        function approve(address spender, uint amount) public returns (bool){
+            return true;
+        }
         function deposit() public payable returns (bool){
+            return true;
+        }
+
+        function withdraw() public returns (bool){
             return true;
         }
     }`
@@ -146,10 +153,64 @@ let deployWETHToken = async function(deployer) {
     return TestToken.at(receipt.contractAddress)
 }
 
+let deployDXMock = async function(deployer){
+    let dxSource = `
+    contract DXMock {
+
+        function deposit(address token, uint256 amount) public returns (bool){
+            return true;
+        }
+
+        function postSellOrder(address sellToken, address buyToken, uint256 auctionIndex, uint256 amount) public returns (bool){
+            return true;
+        }
+
+        function postBuyOrder(address sellToken, address buyToken, uint256 auctionIndex, uint256 amount) public returns (bool){
+            return true;
+        }
+
+        function claimTokensFromSeveralAuctionsAsBuyer(
+            address[] memory auctionSellTokens, 
+            address[] memory auctionBuyTokens,
+            uint[] memory auctionIndices, 
+            address user
+        ) 
+            public returns (bool)
+        {
+            return true;
+        }
+
+        function claimTokensFromSeveralAuctionsAsSeller(
+            address[] memory auctionSellTokens,
+            address[] memory auctionBuyTokens,
+            uint[] memory auctionIndices,
+            address user
+        )
+            public returns (bool)
+        {
+            return true;
+        }
+
+        function withdraw() public returns (bool){
+            return true;
+        }
+
+        
+    }`
+    let output = await utils.compile(dxSource);
+    let tokenInterface = output.interface
+    let tokenBytecode = output.data
+    let transactionHash = await web3.eth.sendTransaction({from: deployer, data: tokenBytecode, gas: 4000000})
+    let receipt = web3.eth.getTransactionReceipt(transactionHash);
+    const DXMock = web3.eth.contract(tokenInterface)
+    return DXMock.at(receipt.contractAddress)
+}
+
 Object.assign(exports, {
     estimateDataGas,
     executeTransaction,
     executeTransactionWithSigner,
     deployToken,
-    deployWETHToken
+    deployWETHToken,
+    deployDXMock
 })
